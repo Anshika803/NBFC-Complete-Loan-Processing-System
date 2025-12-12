@@ -12,44 +12,112 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+//thinking
+//1-) A user can have multiple loan application.Loan belongs to user
+//2-)Chatsession tooo belong to user
+//3-) Chatmsg belong to session
+//4-)document belong t user and loan
+//5-)a verification result belong to loan
+
 //USER MODEL
 model User {
-userid      Int      @id @default(autoincrement())
-email  String    @unique
-pan_number  String 
-aadhaar_last_4  String
-aadhaar_verified  Boolean 
-phone_verified_at  DateTime
-created_at    DateTime
-updated_at    DateTime
-deleted_at    DateTime
-chats Chat[]
-loans Loan[]
+  id              Int       @id @default(autoincrement())
+  email           String?   @unique
+  phone           String?   @unique
+  pan_number      String?
+  aadhaar_last_4  String?
+  aadhaar_verified Boolean   @default(false)
+  phone_verified_at DateTime?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+  deleted_at      DateTime?
+  // relations
+  chats           Chat[]
+  loans           Loan[]
+  documents       Document[]
 }
 
 //Chat session
-model Chat{
-  session_id  Int @unique
-  session_token  String // generally browser current session 
-  userid Int    @unique
-  user      User @relation(fields: [userid],references: [userid])
-  created_at DateTime
-  last_active_at DateTime
-  loan_application_id  Int 
-  //each chat session must be connected to separete loanapplication id 
+model Chat {
+  id              Int       @id @default(autoincrement())
+  session_token   String    @unique
+  userId          Int?
+  user            User?     @relation(fields: [userId], references: [id])
+  created_at      DateTime  @default(now())
+  last_active_at  DateTime  @default(now())
+  // One-to-One relationship with Loan
+  loan            Loan?
+  // One-to-Many
+  messages        ChatMessage[]
 }
 
-model Loan{
-   loan_application_id  Int @id @default(autoincrement()) @unique
-   status String
-   type String
-   amount String
-   Payed_amount String
-   created_at    DateTime
-   updated_at    DateTime
-   Tenure   String
-   //ig it should link with session id and  userid
-   userid Int
-   user  User @relation(fields: [userid],references: [userid])
+
+
+//chat message
+model ChatMessage {
+  id         Int       @id @default(autoincrement())
+  chatId     Int
+  chat       Chat      @relation(fields: [chatId], references: [id])
+  sender     String
+  content    String?
+  created_at DateTime  @default(now())
 }
 
+
+
+
+model Loan {
+  id                 Int       @id @default(autoincrement())
+  status             String
+  type               String
+  amount             Int
+  tenure_months      Int
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+  userId             Int
+  user               User      @relation(fields: [userId], references: [id])
+  chatId             Int? @unique
+  chat               Chat?     @relation(fields: [chatId], references: [id])
+  documents          Document[]
+  verificationResults VerificationResult[]
+  underwriting       UnderwritingResult?
+}
+ //documnets schema
+ model Document {
+  id                Int       @id @default(autoincrement())
+  type              String
+  filepath          String
+  status            String
+  created_at        DateTime @default(now())
+  userId            Int
+  user              User @relation(fields: [userId], references: [id])
+  loanId            Int
+  loan              Loan @relation(fields: [loanId], references: [id])
+}
+
+  //verfication agent results
+ model VerificationResult {
+  id         Int      @id @default(autoincrement())
+  type       String
+  status     String
+  result     Json
+  created_at DateTime @default(now())
+  loanId     Int
+  loan       Loan @relation(fields: [loanId], references: [id])
+}
+
+
+  //underwriting agent
+  //what he will do i am yet to think
+  model UnderwritingResult {
+  id            Int      @id @default(autoincrement())
+  approved      Boolean
+  score         Float?
+  reason        Json?
+  manual_override Boolean @default(false)
+  created_at    DateTime @default(now())
+  loanId        Int      @unique
+  loan          Loan     @relation(fields: [loanId], references: [id])
+}
+//admin schema is pending
+//will make enums to make stricter
