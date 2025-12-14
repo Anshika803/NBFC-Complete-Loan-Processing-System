@@ -18,9 +18,11 @@
     "@langchain/google-gauth": "^2.1.0",
     "@langchain/google-genai": "^2.1.0",
     "@langchain/langgraph": "^1.0.4",
+    "cloudinary": "^2.8.0",
     "cors": "^2.8.5",
     "express": "^5.2.1",
-    "openai": "^6.10.0"
+    "openai": "^6.10.0",
+    "pdfkit": "^0.17.2"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
