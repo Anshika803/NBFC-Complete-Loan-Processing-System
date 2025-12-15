@@ -1,63 +1,121 @@
 import { ChatGoogle } from "@langchain/google-gauth";
-import { MasterAgentInput , AgentIntent } from "./types";
-import { Messages } from "openai/resources/chat/completions";
+import { MasterAgentInput, AgentIntent } from "./types";
 import { salesAgent } from "./sale.agent";
 import { documentationAgent } from "./documnetation.agent";
 import { underwritingAgent } from "./underwriting.agent";
+
+import { verifyPAN, verifyAdhaar } from "../services/verification.service";
+import { getDocumentFromDB } from "../services/verification.service";
+import { documentService } from "../services/document.documentService";
 const model = new ChatGoogle({
   model: "gemma-3-27b-it",
+  temperature: 0.2,
 });
 
-//work:
-//classifies intent and and  routes to correct agent
 export async function processMessage({
   sessionId,
   message,
   loanId,
-}: MasterAgentInput): Promise<string>{
-  const intent=await checkIntent(message);
-  switch (intent) {
-    case "SALES":
-      return await salesAgent(message);
+}: MasterAgentInput): Promise<string> {
 
-    case "DOCUMENTATION":
-      return await documentationAgent(message);
+  const intent = await checkIntent(message);
 
-    case "UNDERWRITING":
+  //sales
+  if (intent === "SALES") {
+    if (!loanId) {
+      return "Error: Loan ID is required for sales operations.";
+    }
+    const reply = await salesAgent(message, loanId);
+    return reply;
+  }
+  //documention
+  if (intent === "DOCUMENTATION") {
+
+    const reply = await documentationAgent(message);
+
+    // Only check uploads when agent signals it
+    if (reply === "CHECK_UPLOAD_STATUS") {
       if (!loanId) {
-        return "I need to know which loan you are referring to. Please provide Loan ID.";
+        return "Error: Loan ID is required for document verification.";
       }
-      return await underwritingAgent(message,loanId);
+      const panUploaded = await safeDocCheck(loanId, "PAN");
+      const aadhaarUploaded = await safeDocCheck(loanId, "AADHAAR");
 
-    default:
-      return "Sorry, I couldn't understand your request. Can you rephrase?";
+      if (panUploaded && aadhaarUploaded) {
+        // Run actual tools (NO LLM!)
+        await verifyPAN(loanId);
+        await verifyAdhaar(loanId);
+        return "Documents verified successfully. Proceeding to underwriting.";
+      }
+      return "Some documents are still missing. Please upload PAN and Aadhaar.";
+    }
+    return reply;
+  }
+  //underwriting 
+  if (intent === "UNDERWRITING") {
+    if (!loanId) {
+      return "Error: Loan ID is required for underwriting operations.";
+    }
+
+    const reply = await underwritingAgent(message, loanId);
+
+    if (reply === "READY_FOR_SANCTION_LETTER") {
+
+      // Generate sanction letter PDF
+      const filePath = await documentService.generateSanctionLetter(loanId);
+
+      return `Sanction letter generated successfully: ${filePath}`;
+    }
+
+    return reply;
   }
 
+  return "Sorry, I couldn't understand your request.";
 }
 
-async function  checkIntent(message:string):Promise<AgentIntent>{
-const res = await model.invoke(`
-Classify the user message into exactly ONE category:
-
-- SALES (loan info, EMI, interest, eligibility)
-- DOCUMENTATION (KYC, PAN, Aadhaar, uploads)
-- UNDERWRITING (risk, approval, income, credit)
-- UNKNOWN
-
-Respond ONLY with the category name.
-
-Message:
-${message}
-`);
-const intent = (res.content as string).trim().toUpperCase();
-
-if (
-  intent === "SALES" ||
-  intent === "DOCUMENTATION" ||
-  intent === "UNDERWRITING"
-) {
-  return intent;
+//helper 
+async function safeDocCheck(loanId: number, type: string) {
+  try {
+    const doc = await getDocumentFromDB(loanId, type);
+    return !!doc;
+  } catch (err) {
+    return false;
+  }
 }
 
-return "UNKNOWN";
+//intent
+async function checkIntent(message: string): Promise<AgentIntent> {
+  const res = await model.invoke(`
+    Classify the user message into exactly ONE:
+    SALES, DOCUMENTATION, UNDERWRITING, UNKNOWN
+
+    Respond ONLY with the category.
+
+    Message: ${message}
+  `);
+
+  const raw = getTextContent(res.content);
+  const intent = raw.trim().toUpperCase();
+
+  if (intent === "SALES" || intent === "DOCUMENTATION" || intent === "UNDERWRITING") {
+    return intent as AgentIntent;
+  }
+
+  return "UNKNOWN";
+}
+// to trim: if not string to handle array
+function getTextContent(content: any): string {
+  if (typeof content === "string") return content;
+
+  if (Array.isArray(content)) {
+    return content
+      .map(block => {
+        if (typeof block === "string") return block;
+        if ("text" in block) return block.text;
+        return "";
+      })
+      .join("");
+  }
+
+  return "";
 }

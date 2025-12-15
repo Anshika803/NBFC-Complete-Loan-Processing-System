@@ -1,5 +1,4 @@
-import { client as prisma } from "@repo/db";
-
+import prisma from "../prisma_client/client";
 export const LoanStatus = {
   INITIATED: "INITIATED",
   KYC_PENDING: "KYC_PENDING",
@@ -20,6 +19,7 @@ export async function createLoan(input: {
   type: string;
   amount: number;
   tenureMonths: number;
+  monthlyincome:number;
 }) {
   return prisma.loan.create({
     data: {
@@ -29,6 +29,7 @@ export async function createLoan(input: {
       amount: input.amount,
       tenure_months: input.tenureMonths,
       status: LoanStatus.INITIATED,
+      monthlyincome:input.monthlyincome
     },
   });
 }
@@ -104,7 +105,7 @@ export const closeLoan = (loanId: number) =>
   updateLoanStatus(loanId, LoanStatus.CLOSED);
 
 export async function getLoanWithDetails(loanId: number) {
-  return prisma.loan.findUnique({
+  const loan = await prisma.loan.findUnique({
     where: { id: loanId },
     include: {
       user: true,
@@ -114,14 +115,32 @@ export async function getLoanWithDetails(loanId: number) {
       chat: true,
     },
   });
+//it should return error
+  if (!loan) {
+    throw new Error(`Loan not found: ${loanId}`);
+  }
+
+  return loan;
 }
 
-/* ----------------------------------
-   7. Get All Loans of a User
----------------------------------- */
+
 export async function getUserLoans(userId: number) {
   return prisma.loan.findMany({
     where: { userId },
     orderBy: { created_at: "desc" },
+  });
+}
+//to update loan fields
+export async function updateLoanFields(
+  loanId: number,
+  data: Partial<{
+    monthly_income: number;
+    amount: number;
+    tenure_months: number;
+  }>
+) {
+  return prisma.loan.update({
+    where: { id: loanId },
+    data,
   });
 }

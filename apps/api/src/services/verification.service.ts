@@ -21,7 +21,7 @@ import csv from "csv-parser";
 const pdfParse = require("pdf-parse");
 
 //common functions:
-async function getDocumentFromDB(loanId:number, type: string){
+export async function getDocumentFromDB(loanId:number, type: string){
     const doc = await prisma.document.findFirst({
         where: {loanId, type}
     });
