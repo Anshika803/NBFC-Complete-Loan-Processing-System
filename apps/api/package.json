@@ -24,11 +24,11 @@
     "csv-parser": "^3.2.0",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
+    "multer": "^2.0.2",
     "openai": "^6.10.0",
-    "pdfkit": "^0.17.2",
     "pdf-parse": "^2.4.5",
-    "twilio": "^5.10.7",
-    "multer": "^2.0.2"
+    "pdfkit": "^0.17.2",
+    "twilio": "^5.10.7"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
