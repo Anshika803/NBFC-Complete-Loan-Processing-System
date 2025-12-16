@@ -1,117 +1,172 @@
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
-import { MasterAgentInput, AgentIntent } from "./types";
 import { salesAgent } from "./sale.agent";
 import { documentationAgent } from "./documnetation.agent";
 import { underwritingAgent } from "./underwriting.agent";
-import  { detectIntent }from "./intent"
-
-import { verifyPAN, verifyAdhaar ,verifySalarySlip,verifyBankStatement} from "../services/verification.service";
-import { getDocumentFromDB } from "../services/verification.service";
+import {
+  createLoan,
+  getLoanWithDetails,
+  updateLoanStatus,
+} from "../services/loan.service";
 import { documentService } from "../services/document.documentService";
-import { createLoan ,getLoanStatus } from "../services/loan.service";
-const model = new ChatGoogleGenerativeAI({
-  apiKey: process.env.GEMINI_API_KEY!, // from AI Studio
-  model: "gemini-1.0-pro",
-  temperature: 0.2,
-  maxRetries: 0, 
 
-});
+export interface MasterAgentInput {
+  message: string;
+  loanId?: number;
+  userId: number;
+}
+
 export async function processMessagebyagent({
   message,
   loanId,
-  userId
+  userId,
 }: MasterAgentInput): Promise<string> {
 
+  if (!userId) return "User session not initialized.";
 
-  
-  const intent =  detectIntent(message);
-  if (!userId) {
-    return "User session not initialized.";
-  }
-  //sales
-  if (intent === "SALES") {
-  let activeLoan = await getLoanStatus(userId);
-  if (!activeLoan.hasLoan) {
+  // 1️⃣ No loan → start SALES
+  if (!loanId) {
     const loan = await createLoan({
       userId,
+      type: "PERSONAL_LOAN",
+      amount: 0,
+      tenureMonths: 0,
+      monthlyincome: 0,
     });
 
-    return "Sure! How much loan amount do you need?";
+    return salesAgent(message, loan.id);
   }
-  //if does not exists
-  if (!activeLoan.loanId) {
-    return "Loan not created yet.";
-  }
-  return salesAgent(message, activeLoan.loanId);
-  //   return reply;
-  }
-  //documention
-  if (intent === "DOCUMENTATION") {
 
-    const reply = await documentationAgent(message);
+  const loan = await getLoanWithDetails(loanId);
 
-    // Only check uploads when agent signals it
-    if (reply === "CHECK_UPLOAD_STATUS") {
-      if (!loanId) {
-        return "Error: Loan ID is required for document verification.";
-      }
-      const panUploaded = await safeDocCheck(loanId, "PAN");
-      const aadhaarUploaded = await safeDocCheck(loanId, "AADHAAR");
-      const salarySlipUploaded = await safeDocCheck(loanId, "SALARY_SLIP"); // NEW
-     const bankStatementUploaded = await safeDocCheck(loanId, "BANK_STATEMENT")
+  // 2️⃣ SALES
+  if (loan.status === "INITIATED") {
+    const reply = await salesAgent(message, loanId);
 
-      if (panUploaded && aadhaarUploaded) {
-        // Run actual tools (NO LLM!)
-        await verifyPAN(loanId);
-        await verifyAdhaar(loanId);
-        if (salarySlipUploaded) {
-          await verifySalarySlip(loanId);
-        }
-  
-        if (bankStatementUploaded) {
-          await verifyBankStatement(loanId);
-        }
-        
-        return "Documents verified successfully. Proceeding to underwriting.";
-      }
-      return "Some documents are still missing. Please upload PAN and Aadhaar.";
+    if (reply === "READY_FOR_VERIFICATION") {
+      await updateLoanStatus(loanId, "KYC_PENDING");
+      return "Please upload PAN, Aadhaar and Salary Slip.";
     }
+
     return reply;
   }
-  //underwriting 
-  if (intent === "UNDERWRITING") {
-    if (!loanId) {
-      return "Error: Loan ID is required for underwriting operations.";
-    }
 
+  // 3️⃣ DOCUMENTS
+  if (loan.status === "KYC_PENDING") {
+    return documentationAgent(message);
+  }
+
+  // 4️⃣ UNDERWRITING
+  if (loan.status === "VERIFIED") {
     const reply = await underwritingAgent(message, loanId);
 
     if (reply === "READY_FOR_SANCTION_LETTER") {
-
-      // Generate sanction letter PDF
       const filePath = await documentService.generateSanctionLetter(loanId);
-
-      return `Sanction letter generated successfully: ${filePath}`;
+      return `Sanction letter generated: ${filePath}`;
     }
 
     return reply;
   }
 
-  return "Sorry, I couldn't understand your request.";
+  return "Your loan is being processed.";
 }
+
+
+
+// export async function processMessagebyagent({
+//   message,
+//   loanId,
+//   userId
+// }: MasterAgentInput): Promise<string> {
+
+
+  
+//   const intent =  await detectIntent(message);
+//   if (!userId) {
+//     return "User session not initialized.";
+//   }
+//   //sales
+//   if (intent === "SALES") {
+//   let activeLoan = await getLoanStatus(userId);
+//   if (!activeLoan.hasLoan) {
+//     const loan = await createLoan({
+//       userId,
+//     });
+
+//     return "Sure! How much loan amount do you need?";
+//   }
+//   //if does not exists
+//   if (!activeLoan.loanId) {
+//     return "Loan not created yet.";
+//   }
+//   return salesAgent(message, activeLoan.loanId);
+//   //   return reply;
+//   }
+//   //documention
+//   if (intent === "DOCUMENTATION") {
+
+//     const reply = await documentationAgent(message);
+
+//     // Only check uploads when agent signals it
+//     if (reply === "CHECK_UPLOAD_STATUS") {
+//       if (!loanId) {
+//         return "Error: Loan ID is required for document verification.";
+//       }
+//       const panUploaded = await safeDocCheck(loanId, "PAN");
+//       const aadhaarUploaded = await safeDocCheck(loanId, "AADHAAR");
+//       const salarySlipUploaded = await safeDocCheck(loanId, "SALARY_SLIP"); // NEW
+//      const bankStatementUploaded = await safeDocCheck(loanId, "BANK_STATEMENT")
+
+//       if (panUploaded && aadhaarUploaded) {
+//         // Run actual tools (NO LLM!)
+//         await verifyPAN(loanId);
+//         await verifyAdhaar(loanId);
+//         if (salarySlipUploaded) {
+//           await verifySalarySlip(loanId);
+//         }
+  
+//         if (bankStatementUploaded) {
+//           await verifyBankStatement(loanId);
+//         }
+        
+//         return "Documents verified successfully. Proceeding to underwriting.";
+//       }
+//       return "Some documents are still missing. Please upload PAN and Aadhaar.";
+//     }
+//     return reply;
+//   }
+//   //underwriting 
+//   if (intent === "UNDERWRITING") {
+//     if (!loanId) {
+//       return "Error: Loan ID is required for underwriting operations.";
+//     }
+
+//     const reply = await underwritingAgent(message, loanId);
+
+//     if (reply === "READY_FOR_SANCTION_LETTER") {
+
+//       // Generate sanction letter PDF
+//       const filePath = await documentService.generateSanctionLetter(loanId);
+
+//       return `Sanction letter generated successfully: ${filePath}`;
+//     }
+
+//     return reply;
+//   }
+
+//   return "Sorry, I couldn't understand your request.";
+// }
 
 //helper 
-async function safeDocCheck(loanId: number, type: string) {
-  try {
-    const doc = await getDocumentFromDB(loanId, type);
-    return !!doc;
-  } catch (err) {
-    return false;
-  }
-}
+// async function safeDocCheck(loanId: number, type: string) {
+//   try {
+//     const doc = await getDocumentFromDB(loanId, type);
+//     return !!doc;
+//   } catch (err) {
+//     return false;
+//   }
+// }
 
 //intent : Exploding with enormous  requests hitting .
-// async function checkIntent(message: string): Promise<AgentIntent> {
+// async function detectIntent(message: string): Promise<AgentIntent> {
 //   const res = await model.invoke(`
 //     Classify the user message into exactly ONE:
 //     SALES, DOCUMENTATION, UNDERWRITING, UNKNOWN

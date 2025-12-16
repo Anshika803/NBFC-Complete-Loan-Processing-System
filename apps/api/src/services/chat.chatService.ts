@@ -1,7 +1,6 @@
 import { prisma} from "../prisma_client/client"
 import { processMessagebyagent } from "../agents/master.agent"
 import crypto from "crypto";
-import { error } from "console";
 
 
 export const chatService ={
@@ -61,6 +60,8 @@ export const chatService ={
         console.log(`the userid is ${chat?.user?.id}`);
         //let me call masteragent
         //master agent not created yet that is why showing error
+        //to make things work
+        if (!chat?.user?.id) return "User session not initialized.";
         const aiReply = await processMessagebyagent({
             message,
             loanId,
