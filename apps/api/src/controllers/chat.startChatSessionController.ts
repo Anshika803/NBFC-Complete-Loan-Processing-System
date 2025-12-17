@@ -6,7 +6,8 @@ export const startchat= async (req:Request,res:Response)=>{
     
     const session=await chatService.createChatSession();
     res.json({
-        sessionId: session.session_token,
-        message: "Chat session started"
+    sessionId: session.sessionToken,
+    loanId: session.loanId,
+    userId: session.userId,
     });
 };

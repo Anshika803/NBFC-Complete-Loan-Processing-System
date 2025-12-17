@@ -1,44 +1,31 @@
 import { salesAgent } from "./sale.agent";
 import { documentationAgent } from "./documnetation.agent";
-import { underwritingAgent } from "./underwriting.agent";
 import {
-  createLoan,
   getLoanWithDetails,
   updateLoanStatus,
 } from "../services/loan.service";
+import { processLoanUnderwriting } from "../services/underwriting.service";
 import { documentService } from "../services/document.documentService";
 
-export interface MasterAgentInput {
-  message: string;
-  loanId?: number;
-  userId: number;
-}
+const PROTOTYPE_MODE = true;
 
 export async function processMessagebyagent({
   message,
   loanId,
   userId,
-}: MasterAgentInput): Promise<string> {
-
-  if (!userId) return "User session not initialized.";
-
-  //  No loan → start SALES
-  if (!loanId) {
-    const loan = await createLoan({
-      userId,
-      type: "PERSONAL_LOAN",
-      amount: 0,
-      tenureMonths: 0,
-      monthlyincome: 0,
-    });
-
-    return salesAgent(message, loan.id);
-  }
+}: {
+  message: string;
+  loanId: number;
+  userId: number;
+}): Promise<string> {
 
   const loan = await getLoanWithDetails(loanId);
+  if (!loan) return "Loan not found.";
 
-  //  SALES
+ 
   if (loan.status === "INITIATED") {
+    console.log("Sales agent started");
+
     const reply = await salesAgent(message, loanId);
 
     if (reply === "READY_FOR_VERIFICATION") {
@@ -48,24 +35,39 @@ export async function processMessagebyagent({
 
     return reply;
   }
-
-  //  DOCUMENTS
   if (loan.status === "KYC_PENDING") {
-    return documentationAgent(message);
-  }
+    console.log("Documentation stage");
 
-  //  UNDERWRITING
-  if (loan.status === "VERIFIED") {
-    const reply = await underwritingAgent(message, loanId);
+    if (PROTOTYPE_MODE) {
+      console.log("Prototype mode: assuming documents uploaded");
 
-    if (reply === "READY_FOR_SANCTION_LETTER") {
-      const filePath = await documentService.generateSanctionLetter(loanId);
-      return `Sanction letter generated: ${filePath}`;
+      await updateLoanStatus(loanId, "VERIFIED");
+
+      return "Documents uploaded successfully. Loan is under review.";
     }
-
+    const reply = await documentationAgent(loanId);
     return reply;
   }
+  if (loan.status === "VERIFIED") {
+    console.log("Underwriting started");
 
+    const result = await processLoanUnderwriting(loanId);
+
+    if (result.approved) {
+      await updateLoanStatus(loanId, "APPROVED");
+      return "Congratulations! Your loan has been approved.";
+    } else {
+      await updateLoanStatus(loanId, "REJECTED");
+      return `Loan rejected: ${result.rejectionReason}`;
+    }
+  }
+  if (loan.status === "APPROVED") {
+    console.log("Generating sanction letter");
+
+    const filePath = await documentService.generateSanctionLetter(loanId);
+
+    return `Your loan is approved. Sanction letter generated: ${filePath}`;
+  }
   return "Your loan is being processed.";
 }
 

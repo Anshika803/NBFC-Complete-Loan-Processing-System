@@ -1,6 +1,7 @@
 import cloudinary from "./cloudinaryconfig";
 export const uploadImage = async (imagePath : string) => {
 try{
+  console.log(`I am inside the cloudinary uplaoder`);
     const result=await cloudinary.uploader.upload(imagePath,{
       use_filename: true,
       unique_filename: false,

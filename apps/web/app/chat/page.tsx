@@ -1,10 +1,9 @@
 'use client';
 
-import { useChat } from '@ai-sdk/react';
-import { DefaultChatTransport } from 'ai';
 import { useRef, useState, useEffect } from 'react';
 import Link from 'next/link';
 import { ThemeToggle } from '../../components/theme-toggle';
+import axios from 'axios';
 
 // Typewriter effect component
 function TypewriterText({ text }: { text: string }) {
@@ -37,25 +36,48 @@ function TypewriterText({ text }: { text: string }) {
     );
 }
 
-export default function Chat() {
-    const { messages, sendMessage, status } = useChat({
-        transport: new DefaultChatTransport({
-            api: '/api/chat',
-        }),
-    });
+interface Message {
+    id: string;
+    role: 'user' | 'assistant';
+    content: string;
+}
 
+export default function Chat() {
+    const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    const [sessionId, setSessionId] = useState<string | null>(null);
+    const [userId, setUserId] = useState<number | null>(null);
+    const [loanId, setLoanId] = useState<number | null>(null);
     const [files, setFiles] = useState<FileList | undefined>(undefined);
     const [isInputFocused, setIsInputFocused] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const [currentDocType, setCurrentDocType] = useState<
+    "PAN" | "AADHAAR" | "SALARY_SLIP" | null
+  >(null);
+  
+
+    // Initialize session
+    useEffect(() => {
+        const initSession = async () => {
+            try {
+                const response = await axios.post('/api/chat/start');
+                setSessionId(response.data.sessionId);
+                setUserId(response.data.userId);
+                console.log(' Session initialized:', response.data.sessionId);
+            } catch (error) {
+                console.error('Failed to initialize session:', error);
+            }
+        };
+        initSession();
+    }, []);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
-    // Auto-resize textarea
     useEffect(() => {
         if (textareaRef.current) {
             textareaRef.current.style.height = 'auto';
@@ -63,21 +85,209 @@ export default function Chat() {
         }
     }, [input]);
 
-    const onSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+const handleFileUpload = async (
+      userId: number,
+      loanId: number
+) => {
+    if (!files || files.length === 0 || !userId || !loanId) return false;
+
+    try {
+        const uploadPromises = Array.from(files).map(async (file) => {
+            const formData = new FormData();
+            if (!currentDocType) {
+                alert("No document expected right now.");
+                return false;
+              }
+            formData.append('file', file); // file is now properly typed as File, not File | undefined
+            formData.append('userId', userId.toString());
+            formData.append('loanId', loanId.toString());
+            formData.append("type", currentDocType);
+
+            // const response = await axios.post('/api/documents/upload', formData, {
+            //     headers: {
+            //         'Content-Type': 'multipart/form-data',
+            //     },
+            // });
+           const response= await axios.post('/api/documents/upload', formData);
+
+
+            console.log(' File uploaded:', response.data);
+            return response.data;
+        });
+
+        await Promise.all(uploadPromises);
+
+        // Clear files after successful upload
+        setFiles(undefined);
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+        }
+
+        return true;
+    } catch (error) {
+        console.error(' Error uploading files:', error);
+        alert('Failed to upload files. Please try again.');
+        return false;
+    }
+};
+// const handleFileUpload = async (userId: number, loanId: number) => {
+//     if (!files || files.length === 0) return false;
+//     if (!currentDocType) return false;
+  
+//     const file = files[0]; // ✅ one file only
+//   if(!file) throw new Error ("File not found");
+//     const formData = new FormData();
+//     formData.append("file", file);
+//     formData.append("userId", userId.toString());
+//     formData.append("loanId", loanId.toString());
+//     formData.append("type", currentDocType);
+  
+//     await axios.post("/api/documents/upload", formData);
+  
+//     setFiles(undefined);
+//     if (fileInputRef.current) fileInputRef.current.value = "";
+  
+//     return true;
+//   };
+  
+  function inferDocTypeFromReply(reply: string) {
+    const text = reply.toLowerCase();
+      if (text.includes("pan card")) return "PAN";
+    if (text.includes("aadhaar card") || text.includes("aadhar card")) return "AADHAAR";
+    if (text.includes("salary slip")) return "SALARY_SLIP";
+  
+    return null;
+  }
+  
+  
+    const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
-        if (input.trim() || files) {
-            sendMessage({
-                text: input,
-                files,
+        if ((!input.trim() && !files) || !sessionId || isLoading) return;
+
+        const hasFiles = files && files.length > 0;
+        const fileNames = hasFiles ? Array.from(files).map(f => f.name).join(', ') : '';
+        
+        const userMessage: Message = {
+            id: Date.now().toString(),
+            role: 'user',
+            content: input.trim() || `📎 Uploading: ${fileNames}`
+        };
+        setMessages(prev => [...prev, userMessage]);
+        const messageText = input.trim();
+        setInput('');
+        setIsLoading(true);
+
+        try {
+            // Send the text message
+            const response = await axios.post('/api/chat', {
+                sessionId,
+                message: messageText || (hasFiles ? `I am uploading ${files.length} document(s): ${fileNames}` : '')
             });
-            setInput('');
-            setFiles(undefined);
-            if (fileInputRef.current) {
-                fileInputRef.current.value = '';
+            // const  doctype=response.data.
+            console.log(response.data.reply);
+            const inferredDocType = inferDocTypeFromReply(response.data.reply);
+            if (inferredDocType) {
+                setCurrentDocType(inferredDocType);
+              }
+              
+
+
+            // Extract loanId if present in the response
+            if (response.data.loanId) {
+                setLoanId(response.data.loanId);
             }
+            const resolvedLoanId = response.data.loanId ?? loanId;
+
+            // If we have files and a loanId, upload them
+            if (hasFiles && userId !== null && resolvedLoanId !== null) {
+                const uploadSuccess = await handleFileUpload(userId, resolvedLoanId);
+                if (uploadSuccess) {
+                    const uploadMessage: Message = {
+                        id: (Date.now() + 1).toString(),
+                        role: 'assistant',
+                        content: `✅ Successfully uploaded ${files.length} document(s).`
+                    };
+                    setMessages(prev => [...prev, uploadMessage]);
+                }
+            }
+
+            const assistantMessage: Message = {
+                id: (Date.now() + 2).toString(),
+                role: 'assistant',
+                content: response.data.reply
+            };
+
+            setMessages(prev => [...prev, assistantMessage]);
+        } catch (error) {
+            console.error(' Error sending message:', error);
+            const errorMessage: Message = {
+                id: (Date.now() + 1).toString(),
+                role: 'assistant',
+                content: ' Sorry, something went wrong. Please try again.'
+            };
+            setMessages(prev => [...prev, errorMessage]);
+        } finally {
+            setIsLoading(false);
         }
     };
-
+    // const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    //     e.preventDefault();
+      
+    //     // CASE 1️⃣: FILE UPLOAD
+    //     if (files && files.length > 0) {
+    //       if (!currentDocType || !userId || !loanId) {
+    //         alert("Please wait for document request before uploading.");
+    //         return;
+    //       }
+      
+    //       setIsLoading(true);
+      
+    //       const uploadSuccess = await handleFileUpload(userId, loanId);
+      
+    //       if (uploadSuccess) {
+    //         setMessages(prev => [
+    //           ...prev,
+    //           {
+    //             id: Date.now().toString(),
+    //             role: "assistant",
+    //             content: `✅ ${currentDocType} uploaded successfully.`,
+    //           },
+    //         ]);
+      
+    //         setCurrentDocType(null);
+    //       }
+      
+    //       setIsLoading(false);
+    //       return;
+    //     }
+      
+    //     // CASE 2️⃣: NORMAL CHAT
+    //     if (!input.trim() || !sessionId || isLoading) return;
+      
+    //     setIsLoading(true);
+      
+    //     const response = await axios.post("/api/chat", {
+    //       sessionId,
+    //       message: input,
+    //     });
+      
+    //     setInput("");
+      
+    //     // Infer doc type ONLY from assistant reply
+    //     const inferred = inferDocTypeFromReply(response.data.reply);
+    //     if (inferred) setCurrentDocType(inferred);
+      
+    //     if (response.data.loanId) setLoanId(response.data.loanId);
+      
+    //     setMessages(prev => [
+    //       ...prev,
+    //       { id: Date.now().toString(), role: "user", content: input },
+    //       { id: Date.now().toString(), role: "assistant", content: response.data.reply },
+    //     ]);
+      
+    //     setIsLoading(false);
+    //   };
+      
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files) {
             setFiles(e.target.files);
@@ -96,13 +306,15 @@ export default function Chat() {
                                     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
                                 </svg>
                             </div>
-                            <div className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-green-500 border-2 border-white dark:border-gray-900 animate-pulse" />
+                            <div className={`absolute -top-1 -right-1 h-3 w-3 rounded-full border-2 border-white dark:border-gray-900 ${sessionId ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
                         </div>
                         <div>
                             <h1 className="text-xl font-bold text-blue-900 dark:text-white group-hover:text-blue-700 dark:group-hover:text-blue-400 transition-colors">
                                 NBFC Loan Assistant
                             </h1>
-                            <p className="text-xs text-gray-600 dark:text-gray-400 font-medium">AI-Powered Assistant</p>
+                            <p className="text-xs text-gray-600 dark:text-gray-400 font-medium">
+                                {sessionId ? 'Connected' : 'Connecting...'}
+                            </p>
                         </div>
                     </Link>
                 </div>
@@ -142,7 +354,8 @@ export default function Chat() {
                                     <button
                                         key={action.text}
                                         onClick={() => setInput(action.text)}
-                                        className="group px-6 py-3 rounded-xl bg-white dark:bg-gray-800 border-2 border-blue-200 dark:border-gray-700 text-sm font-semibold text-blue-900 dark:text-white hover:bg-blue-50 dark:hover:bg-gray-700 hover:border-blue-400 dark:hover:border-blue-600 transition-all duration-200 hover:scale-105 shadow-sm hover:shadow-md flex items-center gap-2"
+                                        disabled={!sessionId}
+                                        className="group px-6 py-3 rounded-xl bg-white dark:bg-gray-800 border-2 border-blue-200 dark:border-gray-700 text-sm font-semibold text-blue-900 dark:text-white hover:bg-blue-50 dark:hover:bg-gray-700 hover:border-blue-400 dark:hover:border-blue-600 transition-all duration-200 hover:scale-105 shadow-sm hover:shadow-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                         <span>{action.icon}</span>
                                         {action.text}
@@ -166,7 +379,7 @@ export default function Chat() {
                         </div>
                     )}
 
-                    {messages.map((m: any, idx: number) => (
+                    {messages.map((m, idx) => (
                         <div
                             key={m.id}
                             className={`flex w-full gap-4 animate-slideUp ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
@@ -186,35 +399,17 @@ export default function Chat() {
                             )}
 
                             <div
-                                className={`group flex max-w-[80%] flex-col gap-2 rounded-2xl px-6 py-4 shadow-md hover:shadow-lg transition-all duration-200 ${m.role === 'user'
-                                    ? 'bg-gradient-to-br from-blue-600 to-blue-700 text-white rounded-tr-sm'
-                                    : 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-tl-sm border border-blue-100 dark:border-gray-700'
-                                    }`}
+                                className={`group flex max-w-[80%] flex-col gap-2 rounded-2xl px-6 py-4 shadow-md hover:shadow-lg transition-all duration-200 ${
+                                    m.role === 'user'
+                                        ? 'bg-gradient-to-br from-blue-600 to-blue-700 text-white rounded-tr-sm'
+                                        : 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-tl-sm border border-blue-100 dark:border-gray-700'
+                                }`}
                             >
                                 <div className="whitespace-pre-wrap leading-relaxed text-sm md:text-base">
-                                    {m.parts && m.parts.length > 0 ? (
-                                        m.parts.map((part: any, index: number) => {
-                                            if (part.type === 'text') {
-                                                if (m.role === 'assistant') {
-                                                    return <TypewriterText key={index} text={part.text} />;
-                                                }
-                                                return <span key={index}>{part.text}</span>;
-                                            }
-                                            if (part.type === 'file' && part.mediaType?.startsWith('image/')) {
-                                                return (
-                                                    <div key={index} className="relative rounded-xl overflow-hidden border border-blue-200 dark:border-gray-700 w-48 h-48 bg-blue-50 dark:bg-gray-700 mb-2 hover:scale-105 transition-transform duration-200">
-                                                        <img src={part.url} alt={part.filename || 'attachment'} className="w-full h-full object-cover" />
-                                                    </div>
-                                                );
-                                            }
-                                            return null;
-                                        })
+                                    {m.role === 'assistant' ? (
+                                        <TypewriterText text={m.content} />
                                     ) : (
-                                        m.role === 'assistant' && m.content ? (
-                                            <TypewriterText text={m.content} />
-                                        ) : (
-                                            m.content || 'No content'
-                                        )
+                                        m.content
                                     )}
                                 </div>
                                 <div className={`flex items-center gap-2 text-xs mt-1 ${m.role === 'user' ? 'text-blue-100' : 'text-gray-500 dark:text-gray-400'}`}>
@@ -237,7 +432,7 @@ export default function Chat() {
                         </div>
                     ))}
 
-                    {status === 'streaming' && (
+                    {isLoading && (
                         <div className="flex w-full justify-start gap-4 animate-fadeIn">
                             <div className="flex-shrink-0 h-10 w-10 rounded-full bg-gradient-to-br from-blue-600 to-blue-700 flex items-center justify-center shadow-lg shadow-blue-600/30 animate-pulse">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
@@ -258,8 +453,9 @@ export default function Chat() {
 
             {/* Input Area */}
             <div className="border-t border-blue-200 dark:border-gray-800 bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl p-6 shadow-2xl transition-colors duration-300">
-                <form onSubmit={onSubmit} className={`mx-auto flex max-w-4xl items-end gap-3 rounded-2xl bg-gradient-to-br from-blue-50 to-white dark:from-gray-800 dark:to-gray-900 p-4 border-2 transition-all duration-300 ${isInputFocused ? 'border-blue-500 dark:border-blue-600 shadow-lg shadow-blue-500/20 dark:shadow-blue-600/20' : 'border-blue-200 dark:border-gray-700 shadow-sm'
-                    }`}>
+                <form onSubmit={onSubmit} className={`mx-auto flex max-w-4xl items-end gap-3 rounded-2xl bg-gradient-to-br from-blue-50 to-white dark:from-gray-800 dark:to-gray-900 p-4 border-2 transition-all duration-300 ${
+                    isInputFocused ? 'border-blue-500 dark:border-blue-600 shadow-lg shadow-blue-500/20 dark:shadow-blue-600/20' : 'border-blue-200 dark:border-gray-700 shadow-sm'
+                }`}>
 
                     <input
                         type="file"
@@ -273,7 +469,8 @@ export default function Chat() {
                     <button
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
-                        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-gray-600 dark:text-gray-400 hover:bg-blue-100 dark:hover:bg-gray-700 hover:text-blue-600 dark:hover:text-blue-400 transition-all duration-200 hover:scale-110"
+                        disabled={!sessionId}
+                        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-gray-600 dark:text-gray-400 hover:bg-blue-100 dark:hover:bg-gray-700 hover:text-blue-600 dark:hover:text-blue-400 transition-all duration-200 hover:scale-110 disabled:opacity-50 disabled:cursor-not-allowed"
                         title="Attach files"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -286,7 +483,7 @@ export default function Chat() {
                             ref={textareaRef}
                             className="w-full bg-transparent px-4 py-3 text-sm placeholder:text-gray-500 dark:placeholder:text-gray-600 focus:outline-none text-gray-900 dark:text-gray-100 resize-none max-h-32"
                             value={input}
-                            placeholder="Type your message... (Press Enter to send, Shift+Enter for new line)"
+                            placeholder={sessionId ? "Type your message... (Press Enter to send, Shift+Enter for new line)" : "Connecting..."}
                             onChange={(e) => setInput(e.target.value)}
                             onFocus={() => setIsInputFocused(true)}
                             onBlur={() => setIsInputFocused(false)}
@@ -296,7 +493,7 @@ export default function Chat() {
                                     onSubmit(e as any);
                                 }
                             }}
-                            disabled={status !== 'ready'}
+                            disabled={isLoading || !sessionId}
                             rows={1}
                             autoFocus
                         />
@@ -329,7 +526,7 @@ export default function Chat() {
 
                     <button
                         type="submit"
-                        disabled={(!input.trim() && !files) || status !== 'ready'}
+                        disabled={(!input.trim() && !files) || isLoading || !sessionId}
                         className="group flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-blue-700 text-white shadow-lg shadow-blue-600/30 transition-all duration-200 hover:scale-110 hover:shadow-xl hover:shadow-blue-600/40 disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed"
                         title="Send message"
                     >

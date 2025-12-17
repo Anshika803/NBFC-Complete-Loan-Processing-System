@@ -47,7 +47,7 @@ export const documentService ={
 },
 
 
- async  generateSanctionLetter(
+  async  generateSanctionLetter(
   loanId: number
 ): Promise<string> {
 
@@ -69,9 +69,9 @@ export const documentService ={
     throw new Error("Loan not found");
   }
 
-  if (!loan.underwriting || loan.underwriting.approved !== true) {
-    throw new Error("Loan not approved");
-  }
+  // if (!loan.underwriting || loan.underwriting.approved !== true) {
+  //   throw new Error("Loan not approved");
+  // }
 
   //  Prepare local file path
   const tempDir = path.join(process.cwd(), "tmp");

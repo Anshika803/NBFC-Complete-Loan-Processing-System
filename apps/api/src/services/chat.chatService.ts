@@ -1,6 +1,7 @@
 import { prisma} from "../prisma_client/client"
 import { processMessagebyagent } from "../agents/master.agent"
 import crypto from "crypto";
+import { error } from "console";
 
 
 export const chatService ={
@@ -8,15 +9,30 @@ export const chatService ={
     const user = await prisma.user.create({
       data: {},
     });
-    return prisma.chat.create({
+    const chat = await prisma.chat.create({
       data: {
         session_token: crypto.randomUUID(),
         userId: user.id,
       },
     });
+    const loan = await prisma.loan.create({
+      data: {
+        userId: user.id,
+        chatId: chat.id,
+        status: "INITIATED",
+        type: "PERSONAL_LOAN",
+        amount: 0,
+        tenure_months: 0,
+        monthlyincome: 0,
+      },
+    });
+    return {
+      sessionToken: chat.session_token,
+      userId: user.id,
+      loanId: loan.id,
+    };
   }
   ,
-
     async saveUserMessage(session_token:string,message:string){
       const chat = await prisma.chat.findUnique({
         where: { session_token: session_token },
@@ -57,10 +73,13 @@ export const chatService ={
           throw new Error("Chat session not found");
         }
         const loanId = chat.loan?.id;
+        console.log(`The loanId is ${chat.loan?.id}`);
         console.log(`the userid is ${chat?.user?.id}`);
+
         //let me call masteragent
         //master agent not created yet that is why showing error
         //to make things work
+        if(!loanId) throw new Error ("No loan id found");
         if (!chat?.user?.id) return "User session not initialized.";
         const aiReply = await processMessagebyagent({
             message,

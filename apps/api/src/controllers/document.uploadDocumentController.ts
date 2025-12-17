@@ -1,11 +1,12 @@
 import { Request,Response } from "express";
 import { uploadImage } from "../services/document.uploadDocument";
-import prisma from "../prisma_client/client";
+// import prisma from "../prisma_client/client";
 import { documentService } from "../services/document.documentService";
 export const uploadDocument=async (req:Request,res:Response)=>{
    try{
     const filepath=req.file?.path;
     const { userId, loanId, type } = req.body;
+    console.log(`File path is ${filepath}`)
     if(!filepath){
         return res
         .status(400)
@@ -14,7 +15,7 @@ export const uploadDocument=async (req:Request,res:Response)=>{
     if(!filepath){
       return res.status(400).json({ error: "File not found" });
     }
-
+console.log(`Upload image is starting`)
     const cloudinaryUrl=await uploadImage(filepath);
     //if upload fail to guard ts
     if (!cloudinaryUrl) {
